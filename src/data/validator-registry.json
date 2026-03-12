@@ -1,0 +1,95 @@
+{
+  "generatedAt": "2026-03-10T02:46:35.922Z",
+  "source": "stakeflow/network-registry",
+  "count": 22,
+  "validators": {
+    "0x05e5417c65f5f81bf6dccd3bded30fa779a5ec78": {
+      "moniker": "Stakeflow",
+      "logoPath": "/validator-logos/0x05e5417c65f5f81bf6dccd3bded30fa779a5ec78.png"
+    },
+    "0x0cba879804ef58fd77e34abbb46f391979721b25": {
+      "moniker": "ITRocket",
+      "logoPath": "/validator-logos/0x0cba879804ef58fd77e34abbb46f391979721b25.png"
+    },
+    "0x0f87a3c5f45dac811a3ba894e8e11bbe28103ee5": {
+      "moniker": "Enigma",
+      "logoPath": "/validator-logos/0x0f87a3c5f45dac811a3ba894e8e11bbe28103ee5.png"
+    },
+    "0x111ce88feb53ce74e6468c9c31fac820ee96bcd3": {
+      "moniker": "Vault Staking",
+      "logoPath": "/validator-logos/0x111ce88feb53ce74e6468c9c31fac820ee96bcd3.png"
+    },
+    "0x185332cd8c8bca5f902d0e329f9374937f8b3379": {
+      "moniker": "Staketab",
+      "logoPath": "/validator-logos/0x185332cd8c8bca5f902d0e329f9374937f8b3379.png"
+    },
+    "0x1fd4a4805f7b6a89610ab3e04e56d9b4e9abda35": {
+      "moniker": "Validation Cloud",
+      "logoPath": "/validator-logos/0x1fd4a4805f7b6a89610ab3e04e56d9b4e9abda35.png"
+    },
+    "0x2e2e10e811b3dd5691ab2744e694072cd749bde7": {
+      "moniker": "stakeFi",
+      "logoPath": "/validator-logos/0x2e2e10e811b3dd5691ab2744e694072cd749bde7.png"
+    },
+    "0x30a3bf62eb474c0a49fa8b4151eb02d6493d2f9f": {
+      "moniker": "[NODERS]",
+      "logoPath": "/validator-logos/0x30a3bf62eb474c0a49fa8b4151eb02d6493d2f9f.png"
+    },
+    "0x37c7dc11812e11fab9127c8746a4d576f5ab5280": {
+      "moniker": "breskulpeak.com",
+      "logoPath": "/validator-logos/0x37c7dc11812e11fab9127c8746a4d576f5ab5280.png"
+    },
+    "0x398601d19fdcea40b1c5ef386e272a8b29e3a62d": {
+      "moniker": "🔥STAVR🔥",
+      "logoPath": "/validator-logos/0x398601d19fdcea40b1c5ef386e272a8b29e3a62d.png"
+    },
+    "0x50cf23b31c78e65552ec338c5b6a32d65447a2e3": {
+      "moniker": "Speedy Staking",
+      "logoPath": "/validator-logos/0x50cf23b31c78e65552ec338c5b6a32d65447a2e3.png"
+    },
+    "0x56fe65a264a192e55f374858604ca57191b6f71f": {
+      "moniker": "UTSA",
+      "logoPath": "/validator-logos/0x56fe65a264a192e55f374858604ca57191b6f71f.png"
+    },
+    "0x612e73e6c3232a92e1c5171f659c41400fea6bcc": {
+      "moniker": "FinoaConsensusServices",
+      "logoPath": "/validator-logos/0x612e73e6c3232a92e1c5171f659c41400fea6bcc.png"
+    },
+    "0x6e595d9ce1bd44dc6f997b18d2699619aabe9c55": {
+      "moniker": "Zuka",
+      "logoPath": "/validator-logos/0x6e595d9ce1bd44dc6f997b18d2699619aabe9c55.png"
+    },
+    "0x6e9ea56ab25ecab9bcfe1a128c54cf07d0ef1400": {
+      "moniker": "Decentrio",
+      "logoPath": "/validator-logos/0x6e9ea56ab25ecab9bcfe1a128c54cf07d0ef1400.png"
+    },
+    "0x8042dd69d91099f1a07d86043cef50e5666d7cfa": {
+      "moniker": "Adanode",
+      "logoPath": "/validator-logos/0x8042dd69d91099f1a07d86043cef50e5666d7cfa.jpg"
+    },
+    "0x82e4ed31a437a8e2eea6012531a2c754c8c3ab82": {
+      "moniker": "UncommonLab",
+      "logoPath": "/validator-logos/0x82e4ed31a437a8e2eea6012531a2c754c8c3ab82.png"
+    },
+    "0x8de949f5e6ab1108bcc7ec301f83bf55a2214441": {
+      "moniker": "Coinage x DAIC",
+      "logoPath": "/validator-logos/0x8de949f5e6ab1108bcc7ec301f83bf55a2214441.png"
+    },
+    "0xad68b8994bc1433c15dd8cca3ec3aefd7c5cb85a": {
+      "moniker": "RHINO 🦏",
+      "logoPath": "/validator-logos/0xad68b8994bc1433c15dd8cca3ec3aefd7c5cb85a.png"
+    },
+    "0xcf0e242bfba2f57051fd5cc1d738dd6f25f514f5": {
+      "moniker": "kingnodes 👑",
+      "logoPath": "/validator-logos/0xcf0e242bfba2f57051fd5cc1d738dd6f25f514f5.svg"
+    },
+    "0xf26b0ca600ef22ab0a7d9fe854d4095421a98ddb": {
+      "moniker": "StakingCabin",
+      "logoPath": "/validator-logos/0xf26b0ca600ef22ab0a7d9fe854d4095421a98ddb.png"
+    },
+    "0xae172a1b52331885da7c3fb48f4c5fc943105e4b": {
+      "moniker": "Stakin by The Tie",
+      "logoPath": "/validator-logos/0xae172a1b52331885da7c3fb48f4c5fc943105e4b.png"
+    }
+  }
+}
