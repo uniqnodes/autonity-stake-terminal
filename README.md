@@ -65,6 +65,33 @@ Behavioral truth:
 - Ethers.js for chain interaction
 - Validator metadata enrichment from a cached registry source
 
+## ABIs & Contract Reads
+
+The terminal uses minimal ABI surfaces focused on staking lifecycle operations.
+
+- Autonity Protocol Contract
+  - Reads: `getCommittee`, `getValidators`, `getValidator`, `getUnbondingPeriod`,
+    request lookup methods
+  - Writes: `bond`, `unbond`
+  - Events: bonding/unbonding request events
+- Liquid Newton (per validator)
+  - Reads: `balanceOf`, `lockedBalanceOf`, `unlockedBalanceOf`, `unclaimedRewards`
+  - Writes: `claimRewards`
+- Vault Contract
+  - Reads: `getBeneficiary`, `getValidatorSet`, `liquidBalance`, `unlockedFunds`
+  - Writes: `bond`, `unbond`, `claimAllStakingRewards`, `releaseFunds`
+
+Runtime ABI override is not exposed in the UI. ABI updates are handled in source control and
+released with app updates to keep behavior deterministic.
+
+## References
+
+- Autonity Contract Interface: https://docs.autonity.org/reference/api/aut/
+- Liquid Newton Contract Interface: https://docs.autonity.org/reference/api/liquid-newton/
+- Bond / Unbond guide: https://docs.autonity.org/delegators/bond-stake/
+- Claim rewards guide: https://docs.autonity.org/delegators/claim-rewards/
+- Stakeflow network registry: https://github.com/stakeflow/network-registry
+
 ## Acknowledgement
 
 Validator moniker and logo metadata are sourced from
