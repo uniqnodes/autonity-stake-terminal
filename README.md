@@ -92,7 +92,12 @@ released with app updates to keep behavior deterministic.
 - Claim rewards guide: https://docs.autonity.org/delegators/claim-rewards/
 - Stakeflow network registry: https://github.com/stakeflow/network-registry
 
-## Acknowledgement
+## Disclaimer
 
-Validator moniker and logo metadata are sourced from
-[`stakeflow/network-registry`](https://github.com/stakeflow/network-registry).
+This software is provided for informational and operational tooling purposes. It is provided
+"as is", without warranties of any kind. Users are responsible for verifying all on-chain actions,
+addresses, amounts, and network parameters before confirming transactions.
+
+## License
+
+MIT - see `LICENSE`.
