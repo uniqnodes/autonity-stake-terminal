@@ -1,35 +1,71 @@
 # Autonity Stake Terminal
 
-Production-oriented Autonity wallet/vault dashboard.
+Autonity Stake Terminal is a full-lifecycle staking interface for Autonity delegators.
 
-## What it does
+The product goal is simple: staking UI should reveal protocol state, not hide it. Wallet mode and
+vault mode are handled in one coherent surface so users can see where value is, what is pending,
+and what can be executed now.
 
-- Injected EVM wallet connect + Autonity chain switch/add
-- Auto vault discovery for connected beneficiary
-- Wallet ATN / NTN balances
-- Delegation table (locked/unlocked/total LNTN + claimable rewards)
-- Bond / Unbond flows
-- Claim rewards
-  - Wallet mode: per-validator claim
-  - Vault mode: claim all staking rewards
-- Unbonding request tracking
-- Vault release funds action
+Note: To initiate on-chain operations, connect your address through an injected EVM wallet.
 
-## Acknowledgements
+## Protocol-First Design
 
-<img src="./public/validator-logos/0x05e5417c65f5f81bf6dccd3bded30fa779a5ec78.png" alt="Stakeflow logo" width="20" height="20" />
+Autonity staking is not a one-click flow. It is a state machine with delayed transitions, queue
+timing, validator ratios, and vault-specific interpretation layers. This terminal is designed to
+make those mechanics explicit and operational for everyday delegators.
 
-Thanks to [`stakeflow/network-registry`](https://github.com/stakeflow/network-registry) for
-providing validator moniker and logo data used in this project.
+## What You Can Do
 
-## Production build
+- Connect an injected EVM wallet and operate directly on Autonity staking flows.
+- Discover and switch between wallet and vault delegation contexts.
+- Stake (`bond`) NTN to active validators.
+- Unstake (`unbond`) LNTN with queue-aware status tracking.
+- Claim rewards from validator positions.
+- Release ready vault funds to wallet when protocol conditions are met.
+- Inspect validator and position context in one place: identity, fee, total stake, self-bonded,
+  live conversion ratio (`1 LNTN = x NTN`), and your stake.
+- Track protocol requests in chronological order with clear phase labels.
+- View balances and staking totals across wallet and vault contexts without ambiguity.
 
-```bash
-npm run lint
-npm run build
-npm start
+## Protocol Model
+
+```text
+Wallet NTN
+  -> bond
+Bonded position
+  -> represented as
+LNTN
+  -> unbond
+Queue request created
+  -> waiting period
+Ready / Released
+  -> vault release
+Withdrawable NTN
+  -> withdraw
+Wallet NTN
 ```
 
-Environment variables are documented in `./.env.sample`.
+Behavioral truth:
 
-<sub>for donations: <code>0xBA917955E2c1b3bF67dfdaAe9D78508f11ccE862</code></sub>
+- `bond` is instant from user perspective after transaction confirmation.
+- `unbond` is delayed by protocol queue timing.
+- `ready queue` is not always equal to immediate wallet-ready value.
+- `vault mode` adds one more interpretation layer on top of the same protocol mechanics.
+
+## UX Direction
+
+- Full-width terminal-style layout for high-density state visibility.
+- State-first hierarchy with minimal admin noise.
+- Action controls placed where intent occurs: card-level global actions and inline row actions.
+- Consistent token-location language: staked, claimable, vesting-locked, releasable, withdrawable.
+
+## Stack
+
+- Next.js, React, TypeScript
+- Ethers.js for chain interaction
+- Validator metadata enrichment from a cached registry source
+
+## Acknowledgement
+
+Validator moniker and logo metadata are sourced from
+[`stakeflow/network-registry`](https://github.com/stakeflow/network-registry).
