@@ -1471,7 +1471,10 @@ export default function HomePage() {
   }, []);
 
   const connectWallet = useCallback(async () => {
-    const provider = getInjectedProvider() || (HAS_WALLETCONNECT ? await createWalletConnectProvider() : null);
+    const injectedProvider = getInjectedProvider();
+    const provider = injectedProvider || (HAS_WALLETCONNECT ? await createWalletConnectProvider() : null);
+    const usingWalletConnect = !Boolean(injectedProvider);
+
     if (!provider) {
       setStatusLine(
         HAS_WALLETCONNECT
@@ -1483,6 +1486,7 @@ export default function HomePage() {
     }
     try {
       window.localStorage.removeItem(MANUAL_DISCONNECT_KEY);
+      setStatusLine(usingWalletConnect ? "WalletConnect: connecting…" : "Connecting wallet…");
       const accounts = await getWalletAccounts(provider);
 
       if (!Array.isArray(accounts) || accounts.length === 0) {
@@ -1491,14 +1495,29 @@ export default function HomePage() {
       }
 
       const nextAccount = getAddress(accounts[0]);
-      await ensureAutonityChain(provider);
-      const sessionReady = await ensureApiSession(nextAccount, true, provider);
-      if (!sessionReady) {
-        setStatusLine("Wallet session setup failed.");
-        return;
+      setStatusLine("Wallet connected. Ensuring Autonity network…");
+      try {
+        await ensureAutonityChain(provider);
+      } catch (error) {
+        if (usingWalletConnect) {
+          setStatusLine(
+            "Wallet connected. If this wallet does not support auto network switching, switch to Autonity manually."
+          );
+        } else {
+          throw error;
+        }
       }
 
-      const chainHex = (await provider.request({ method: "eth_chainId" })) as string;
+      setStatusLine(usingWalletConnect ? "Wallet connected. Starting session…" : "Starting session…");
+      if (!usingWalletConnect) {
+        const sessionReady = await ensureApiSession(nextAccount, true, provider);
+        if (!sessionReady) {
+          setStatusLine("Wallet session setup failed.");
+          return;
+        }
+      }
+
+      const chainHex = (await requestWithTimeout<string>(provider, { method: "eth_chainId" })) as string;
       setActiveWalletProvider(provider);
       setAccount(nextAccount);
       setChainId(parseInt(chainHex, 16));
