@@ -151,6 +151,22 @@ function parseError(error: unknown) {
     .trim();
 }
 
+function normalizeWalletAddress(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  let candidate = trimmed;
+  if (trimmed.includes(":")) {
+    const parts = trimmed.split(":");
+    candidate = parts[parts.length - 1] || "";
+  }
+  try {
+    return getAddress(candidate);
+  } catch {
+    return null;
+  }
+}
+
 const AUTONITY_CHAIN_NAME = AUTONITY_CHAIN_CONFIG.chainName || "Autonity";
 
 const chainSwitchErrorMessage = (error: unknown) => {
@@ -522,19 +538,12 @@ export default function HomePage() {
   }, []);
 
   const getWalletAccounts = useCallback(async (provider: EvmProvider) => {
-    const normalize = (value: unknown): string | null => {
-      if (typeof value !== "string") return null;
-      try {
-        return getAddress(value);
-      } catch {
-        return null;
-      }
-    };
-
     try {
       const requested = await provider.request({ method: "eth_requestAccounts" });
       const requestedAccounts = Array.isArray(requested) ? requested : [];
-      const normalized = requestedAccounts.map(normalize).filter((item): item is string => Boolean(item));
+      const normalized = requestedAccounts
+        .map(normalizeWalletAddress)
+        .filter((item): item is string => Boolean(item));
       if (normalized.length > 0) return normalized;
     } catch {
       // some providers (notably WalletConnect) can fail this method until connected;
@@ -544,7 +553,9 @@ export default function HomePage() {
     try {
       const accountsResult = await provider.request({ method: "eth_accounts" });
       const accounts = Array.isArray(accountsResult) ? accountsResult : [];
-      const normalized = accounts.map(normalize).filter((item): item is string => Boolean(item));
+      const normalized = accounts
+        .map(normalizeWalletAddress)
+        .filter((item): item is string => Boolean(item));
       if (normalized.length > 0) return normalized;
     } catch {
       // fallback handled below
@@ -552,7 +563,9 @@ export default function HomePage() {
 
     const providerAccounts = (provider as { accounts?: unknown }).accounts;
     const cached: unknown[] = Array.isArray(providerAccounts) ? (providerAccounts as unknown[]) : [];
-    const normalizedCached = cached.map(normalize).filter((item): item is string => Boolean(item));
+    const normalizedCached = cached
+      .map(normalizeWalletAddress)
+      .filter((item): item is string => Boolean(item));
     if (normalizedCached.length > 0) return normalizedCached;
 
     const sessionNamespaces = provider.session?.namespaces || {};
@@ -560,12 +573,7 @@ export default function HomePage() {
       .map((entry) => (Array.isArray(entry.accounts) ? entry.accounts : []))
       .flat();
     const normalizedSession = namespaceAccounts
-      .map((entry) => {
-        if (typeof entry !== "string") return null;
-        const parts = entry.split(":");
-        const address = parts[parts.length - 1];
-        return normalize(address);
-      })
+      .map((entry) => normalizeWalletAddress(entry))
       .filter((item): item is string => Boolean(item));
     if (normalizedSession.length > 0) return normalizedSession;
 
@@ -1470,9 +1478,54 @@ export default function HomePage() {
     setWalletMenuOpen(false);
   }, []);
 
+  const completeWalletConnection = useCallback(
+    async (provider: EvmProvider, interactiveSignature: boolean) => {
+      const accounts = await getWalletAccounts(provider);
+      if (!Array.isArray(accounts) || accounts.length === 0) {
+        throw new Error("Wallet account not available yet. Approve in wallet and return.");
+      }
+
+      const nextAccount = getAddress(accounts[0]);
+      await ensureAutonityChain(provider);
+
+      const sessionReady = await ensureApiSession(nextAccount, interactiveSignature, provider);
+      if (!sessionReady) {
+        throw new Error("Session signature required.");
+      }
+
+      const chainHex = (await requestWithTimeout<string>(provider, {
+        method: "eth_chainId",
+      })) as string;
+      const parsedChainId =
+        typeof chainHex === "string" ? Number.parseInt(chainHex, 16) : AUT_CHAIN_ID;
+
+      window.localStorage.removeItem(MANUAL_DISCONNECT_KEY);
+      setActiveWalletProvider(provider);
+      setAccount(nextAccount);
+      setSelectedDelegator(nextAccount);
+      setChainId(parsedChainId);
+      setLastTxHash("");
+      setActionLine("");
+      setWalletMenuOpen(false);
+      setClaimValidator("");
+      setBondExactMaxAmount(null);
+      setUnbondExactMaxAmount(null);
+      setPositionInlineAction(null);
+      setPositionInlineAmount("");
+      setPositionInlineExactMaxAmount(null);
+      setUnbondDropdownOpen(false);
+      setClaimDropdownOpen(false);
+      await refreshData(nextAccount, nextAccount);
+      setWalletHydrated(true);
+      return nextAccount;
+    },
+    [ensureApiSession, ensureAutonityChain, getWalletAccounts, refreshData, requestWithTimeout]
+  );
+
   const connectWallet = useCallback(async () => {
     const injectedProvider = getInjectedProvider();
-    const provider = injectedProvider || (HAS_WALLETCONNECT ? await createWalletConnectProvider() : null);
+    const provider =
+      injectedProvider || (HAS_WALLETCONNECT ? await createWalletConnectProvider() : null);
     const usingWalletConnect = !Boolean(injectedProvider);
 
     if (!provider) {
@@ -1484,64 +1537,32 @@ export default function HomePage() {
       setWalletHydrated(true);
       return;
     }
+
     try {
-      window.localStorage.removeItem(MANUAL_DISCONNECT_KEY);
-      setStatusLine(usingWalletConnect ? "WalletConnect: connecting…" : "Connecting wallet…");
-      const accounts = await getWalletAccounts(provider);
-
-      if (!Array.isArray(accounts) || accounts.length === 0) {
-        setStatusLine("No wallet account found.");
-        return;
-      }
-
-      const nextAccount = getAddress(accounts[0]);
-      setStatusLine("Wallet connected. Ensuring Autonity network…");
-      try {
-        await ensureAutonityChain(provider);
-      } catch (error) {
-        if (usingWalletConnect) {
-          setStatusLine(
-            "Wallet connected. If this wallet does not support auto network switching, switch to Autonity manually."
-          );
-        } else {
-          throw error;
-        }
-      }
-
-      setStatusLine(usingWalletConnect ? "Wallet connected. Starting session…" : "Starting session…");
-      if (!usingWalletConnect) {
-        const sessionReady = await ensureApiSession(nextAccount, true, provider);
-        if (!sessionReady) {
-          setStatusLine("Wallet session setup failed.");
-          return;
-        }
-      }
-
-      const chainHex = (await requestWithTimeout<string>(provider, { method: "eth_chainId" })) as string;
       setActiveWalletProvider(provider);
-      setAccount(nextAccount);
-      setChainId(parseInt(chainHex, 16));
-      setLastTxHash("");
-      setActionLine("");
-      setWalletMenuOpen(false);
-      setClaimValidator("");
-      setBondExactMaxAmount(null);
-      setUnbondExactMaxAmount(null);
-      await refreshData(nextAccount, nextAccount);
-      setWalletHydrated(true);
+      setStatusLine(
+        usingWalletConnect
+          ? "WalletConnect: approve in MetaMask and return..."
+          : "Connecting wallet..."
+      );
+      await completeWalletConnection(provider, true);
     } catch (error) {
-      setActiveWalletProvider(null);
-      setStatusLine(parseError(error));
+      const message = parseError(error);
+      if (
+        usingWalletConnect &&
+        (message.includes("not available yet") ||
+          message.includes("timed out") ||
+          message.includes("User closed modal"))
+      ) {
+        setStatusLine(
+          "Waiting for WalletConnect approval in MetaMask. Return to this tab after approving."
+        );
+      } else {
+        setStatusLine(message);
+      }
       setWalletHydrated(true);
     }
-  }, [
-    ensureAutonityChain,
-    ensureApiSession,
-    getWalletAccounts,
-    getInjectedProvider,
-    createWalletConnectProvider,
-    refreshData,
-  ]);
+  }, [completeWalletConnection, getInjectedProvider, createWalletConnectProvider]);
 
   const runTx = useCallback(
     async (
@@ -1842,59 +1863,86 @@ export default function HomePage() {
     const walletProvider = activeWalletProvider || getInjectedProvider();
     if (!walletProvider?.on) return;
 
-    const onAccountsChanged = (nextAccounts: unknown) => {
-      const list = Array.isArray(nextAccounts) ? (nextAccounts as string[]) : [];
-      if (list.length === 0) {
-        setActiveWalletProvider(null);
-        resetAppSession("Wallet disconnected.");
-        return;
-      }
+    const isPendingApprovalError = (message: string) =>
+      message.includes("not available yet") ||
+      message.includes("timed out") ||
+      message.includes("Wallet account not available");
 
-      const next = getAddress(list[0]);
+    const tryCompleteFromEvent = (interactiveSignature: boolean) => {
       void (async () => {
         try {
-          const sessionReady = await ensureApiSession(next, true);
-          if (!sessionReady) {
-            resetAppSession("Session signature required.");
+          await completeWalletConnection(walletProvider, interactiveSignature);
+        } catch (error) {
+          const message = parseError(error);
+          if (isPendingApprovalError(message)) {
+            setStatusLine("Waiting for WalletConnect approval in MetaMask. Return to this tab.");
             return;
           }
-
-          window.localStorage.removeItem(MANUAL_DISCONNECT_KEY);
-          setAccount(next);
-          setSelectedDelegator(next);
-          setWalletMenuOpen(false);
-          setClaimValidator("");
-          setBondExactMaxAmount(null);
-          setUnbondExactMaxAmount(null);
-          setPositionInlineAction(null);
-          setPositionInlineAmount("");
-          setPositionInlineExactMaxAmount(null);
-          setUnbondDropdownOpen(false);
-          setClaimDropdownOpen(false);
-          await refreshData(next, next);
-        } catch (error) {
-          resetAppSession(parseError(error));
+          setStatusLine(message);
         }
       })();
     };
 
+    const onAccountsChanged = (nextAccounts: unknown) => {
+      const list = Array.isArray(nextAccounts) ? (nextAccounts as unknown[]) : [];
+      const normalized = list
+        .map(normalizeWalletAddress)
+        .filter((item): item is string => Boolean(item));
+      if (normalized.length === 0) {
+        setActiveWalletProvider(null);
+        resetAppSession("Wallet disconnected.");
+        return;
+      }
+      setStatusLine("Wallet account detected. Checking network and signature...");
+      tryCompleteFromEvent(true);
+    };
+
     const onChainChanged = (chainHex: unknown) => {
       if (typeof chainHex === "string") {
-        setChainId(parseInt(chainHex, 16));
+        setChainId(Number.parseInt(chainHex, 16));
       }
       if (account) {
         void refreshData(account, selectedDelegator || account);
+      } else {
+        tryCompleteFromEvent(true);
+      }
+    };
+
+    const onProviderConnected = () => {
+      if (!account) {
+        setStatusLine("Wallet connected. Requesting network switch and signature...");
+        tryCompleteFromEvent(true);
+      }
+    };
+
+    const onSessionUpdate = () => {
+      if (!account) {
+        tryCompleteFromEvent(true);
+      }
+    };
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible" && !account) {
+        tryCompleteFromEvent(true);
       }
     };
 
     walletProvider.on("accountsChanged", onAccountsChanged);
     walletProvider.on("chainChanged", onChainChanged);
+    walletProvider.on("connect", onProviderConnected);
+    walletProvider.on("session_update", onSessionUpdate);
+    walletProvider.on("session_event", onSessionUpdate);
+    document.addEventListener("visibilitychange", onVisibilityChange);
 
     return () => {
       walletProvider?.removeListener?.("accountsChanged", onAccountsChanged);
       walletProvider?.removeListener?.("chainChanged", onChainChanged);
+      walletProvider?.removeListener?.("connect", onProviderConnected);
+      walletProvider?.removeListener?.("session_update", onSessionUpdate);
+      walletProvider?.removeListener?.("session_event", onSessionUpdate);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, [activeWalletProvider, account, ensureApiSession, getInjectedProvider, refreshData, resetAppSession, selectedDelegator]);
+  }, [activeWalletProvider, account, completeWalletConnection, getInjectedProvider, refreshData, resetAppSession, selectedDelegator]);
 
   useEffect(() => {
     let cancelled = false;
@@ -2302,6 +2350,7 @@ export default function HomePage() {
                 </span>
               </button>
             )}
+            <p className={styles.connectHelpText}>{statusLine}</p>
           </section>
         </section>
       </main>
