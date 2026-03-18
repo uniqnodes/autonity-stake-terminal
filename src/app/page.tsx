@@ -7,9 +7,11 @@ import {
   Interface,
   JsonRpcProvider,
   ZeroAddress,
+  hexlify,
   formatUnits,
   getAddress,
   isAddress,
+  toUtf8Bytes,
   parseUnits,
   zeroPadValue,
 } from "ethers";
@@ -627,8 +629,27 @@ export default function HomePage() {
         throw new Error("Session challenge payload is empty.");
       }
 
-      const signer = await getSigner(providerOverride);
-      const signature = await signer.signMessage(message);
+      let signature: string;
+      if (providerOverride) {
+        try {
+          const signer = await getSigner(providerOverride);
+          signature = await signer.signMessage(message);
+        } catch (signError) {
+          const walletProvider = providerOverride;
+          const walletAddress = address;
+          try {
+            signature = (await walletProvider.request({
+              method: "personal_sign",
+              params: [hexlify(toUtf8Bytes(message)), walletAddress],
+            })) as string;
+          } catch {
+            throw signError;
+          }
+        }
+      } else {
+        const signer = await getSigner();
+        signature = await signer.signMessage(message);
+      }
 
       const verifyRes = await fetch("/api/auth/verify", {
         method: "POST",
@@ -1428,13 +1449,13 @@ export default function HomePage() {
       }
 
       const nextAccount = getAddress(accounts[0]);
+      await ensureAutonityChain(provider);
       const sessionReady = await ensureApiSession(nextAccount, true, provider);
       if (!sessionReady) {
         setStatusLine("Wallet session setup failed.");
         return;
       }
 
-      await ensureAutonityChain(provider);
       const chainHex = (await provider.request({ method: "eth_chainId" })) as string;
       setActiveWalletProvider(provider);
       setAccount(nextAccount);
