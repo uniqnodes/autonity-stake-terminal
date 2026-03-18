@@ -309,6 +309,7 @@ export default function HomePage() {
     null
   );
   const apiSessionAddressRef = useRef("");
+  const walletConnectFlowRef = useRef(false);
 
   const isConnected = account.length > 0;
   const onCorrectChain = chainId === AUT_CHAIN_ID;
@@ -485,7 +486,7 @@ export default function HomePage() {
   const requestWithTimeout = useCallback(async <T,>(
     provider: EvmProvider,
     args: { method: string; params?: unknown[] | object },
-    timeoutMs = 25000
+    timeoutMs = 12000
   ): Promise<T> => {
     let timer: ReturnType<typeof setTimeout> | null = null;
     try {
@@ -596,7 +597,7 @@ export default function HomePage() {
         return;
       }
 
-      await requestWithTimeout(walletProvider, {
+      await walletProvider.request({
         method: "wallet_switchEthereumChain",
         params: [{ chainId: AUTONITY_CHAIN_CONFIG.chainId }],
       });
@@ -604,11 +605,11 @@ export default function HomePage() {
       const code = (error as { code?: number }).code;
       if (code === 4902) {
         try {
-          await requestWithTimeout(walletProvider, {
+          await walletProvider.request({
             method: "wallet_addEthereumChain",
             params: [AUTONITY_CHAIN_CONFIG],
           });
-          await requestWithTimeout(walletProvider, {
+          await walletProvider.request({
             method: "wallet_switchEthereumChain",
             params: [{ chainId: AUTONITY_CHAIN_CONFIG.chainId }],
           });
@@ -688,10 +689,10 @@ export default function HomePage() {
       const signParams = [hexlify(toUtf8Bytes(message)), address];
       if (providerOverride) {
         try {
-          signature = await requestWithTimeout<string>(providerOverride, {
+          signature = (await providerOverride.request({
             method: "personal_sign",
             params: signParams,
-          });
+          })) as string;
         } catch {
           const signer = await getSigner(providerOverride);
           signature = await signer.signMessage(message);
@@ -716,7 +717,7 @@ export default function HomePage() {
       apiSessionAddressRef.current = normalized;
       return true;
     },
-    [getSigner, parseApiErrorMessage, requestWithTimeout]
+    [getSigner, parseApiErrorMessage]
   );
 
   const discoverVaults = useCallback(
@@ -1480,44 +1481,58 @@ export default function HomePage() {
 
   const completeWalletConnection = useCallback(
     async (provider: EvmProvider, interactiveSignature: boolean) => {
-      const accounts = await getWalletAccounts(provider);
-      if (!Array.isArray(accounts) || accounts.length === 0) {
-        throw new Error("Wallet account not available yet. Approve in wallet and return.");
+      if (walletConnectFlowRef.current) {
+        return null;
       }
+      walletConnectFlowRef.current = true;
+      try {
+        setStatusLine("Reading wallet account...");
+        const accounts = await getWalletAccounts(provider);
+        if (!Array.isArray(accounts) || accounts.length === 0) {
+          throw new Error("Wallet account not available yet. Approve in wallet and return.");
+        }
 
-      const nextAccount = getAddress(accounts[0]);
-      await ensureAutonityChain(provider);
+        const nextAccount = getAddress(accounts[0]);
+        setStatusLine("Checking Autonity network...");
+        await ensureAutonityChain(provider);
 
-      const sessionReady = await ensureApiSession(nextAccount, interactiveSignature, provider);
-      if (!sessionReady) {
-        throw new Error("Session signature required.");
+        if (interactiveSignature) {
+          setStatusLine("Requesting session signature...");
+        }
+        const sessionReady = await ensureApiSession(nextAccount, interactiveSignature, provider);
+        if (!sessionReady) {
+          throw new Error("Session signature required.");
+        }
+
+        const chainHex = (await requestWithTimeout<string>(provider, {
+          method: "eth_chainId",
+        })) as string;
+        const parsedChainId =
+          typeof chainHex === "string" ? Number.parseInt(chainHex, 16) : AUT_CHAIN_ID;
+
+        window.localStorage.removeItem(MANUAL_DISCONNECT_KEY);
+        setActiveWalletProvider(provider);
+        setAccount(nextAccount);
+        setSelectedDelegator(nextAccount);
+        setChainId(parsedChainId);
+        setLastTxHash("");
+        setActionLine("");
+        setWalletMenuOpen(false);
+        setClaimValidator("");
+        setBondExactMaxAmount(null);
+        setUnbondExactMaxAmount(null);
+        setPositionInlineAction(null);
+        setPositionInlineAmount("");
+        setPositionInlineExactMaxAmount(null);
+        setUnbondDropdownOpen(false);
+        setClaimDropdownOpen(false);
+        setStatusLine("Signature accepted. Loading dashboard...");
+        await refreshData(nextAccount, nextAccount);
+        setWalletHydrated(true);
+        return nextAccount;
+      } finally {
+        walletConnectFlowRef.current = false;
       }
-
-      const chainHex = (await requestWithTimeout<string>(provider, {
-        method: "eth_chainId",
-      })) as string;
-      const parsedChainId =
-        typeof chainHex === "string" ? Number.parseInt(chainHex, 16) : AUT_CHAIN_ID;
-
-      window.localStorage.removeItem(MANUAL_DISCONNECT_KEY);
-      setActiveWalletProvider(provider);
-      setAccount(nextAccount);
-      setSelectedDelegator(nextAccount);
-      setChainId(parsedChainId);
-      setLastTxHash("");
-      setActionLine("");
-      setWalletMenuOpen(false);
-      setClaimValidator("");
-      setBondExactMaxAmount(null);
-      setUnbondExactMaxAmount(null);
-      setPositionInlineAction(null);
-      setPositionInlineAmount("");
-      setPositionInlineExactMaxAmount(null);
-      setUnbondDropdownOpen(false);
-      setClaimDropdownOpen(false);
-      await refreshData(nextAccount, nextAccount);
-      setWalletHydrated(true);
-      return nextAccount;
     },
     [ensureApiSession, ensureAutonityChain, getWalletAccounts, refreshData, requestWithTimeout]
   );
