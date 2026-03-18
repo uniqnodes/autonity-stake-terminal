@@ -90,6 +90,44 @@
   gap: 8px;
 }
 
+.connectHelp {
+  border: 1px dashed rgba(170, 199, 224, 0.34);
+  border-radius: 14px;
+  background: rgba(12, 31, 50, 0.64);
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.connectHelpText {
+  margin: 0;
+  color: #b5cadf;
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+.connectLinks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.connectLink {
+  border-radius: 999px;
+  border: 1px solid rgba(79, 141, 255, 0.45);
+  background: rgba(16, 38, 62, 0.8);
+  color: #d7ecff;
+  text-decoration: none;
+  padding: 8px 12px;
+  font-size: 13px;
+  transition: background-color 0.14s ease, border-color 0.14s ease;
+}
+
+.connectLink:hover {
+  background: rgba(52, 120, 224, 0.22);
+  border-color: rgba(79, 141, 255, 0.75);
+}
+
 .connectNetworkPill {
   border-radius: 999px;
   border-color: rgba(53, 209, 187, 0.45);

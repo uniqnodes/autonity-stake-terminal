@@ -28,13 +28,19 @@ import {
 } from "@/lib/autonity";
 import Image from "next/image";
 
+type InjectedEthereumProvider = {
+  request: (args: { method: string; params?: unknown[] | object }) => Promise<unknown>;
+  on?: (event: string, listener: (...args: unknown[]) => void) => void;
+  removeListener?: (event: string, listener: (...args: unknown[]) => void) => void;
+  isMetaMask?: boolean;
+  isCoinbaseWallet?: boolean;
+  isBraveWallet?: boolean;
+  providers?: InjectedEthereumProvider[];
+};
+
 declare global {
   interface Window {
-    ethereum?: {
-      request: (args: { method: string; params?: unknown[] | object }) => Promise<unknown>;
-      on?: (event: string, listener: (...args: unknown[]) => void) => void;
-      removeListener?: (event: string, listener: (...args: unknown[]) => void) => void;
-    };
+    ethereum?: InjectedEthereumProvider;
   }
 }
 
@@ -224,6 +230,7 @@ export default function HomePage() {
   const [unbondExactMaxAmount, setUnbondExactMaxAmount] = useState<bigint | null>(null);
   const [claimValidator, setClaimValidator] = useState("");
   const [walletHydrated, setWalletHydrated] = useState(false);
+  const [hasInjectedWallet, setHasInjectedWallet] = useState(false);
 
   const [statusLine, setStatusLine] = useState("Connect your wallet to start.");
   const [actionLine, setActionLine] = useState("");
@@ -402,13 +409,14 @@ export default function HomePage() {
           : ZERO
       : ZERO;
 
-  const ensureAutonityChain = useCallback(async () => {
-    if (!window.ethereum) {
-      throw new Error("MetaMask not found.");
+  const ensureAutonityChain = useCallback(async (provider?: InjectedEthereumProvider) => {
+    const walletProvider = provider || getInjectedProvider();
+    if (!walletProvider) {
+      throw new Error("EVM wallet provider not found.");
     }
 
     try {
-      await window.ethereum.request({
+      await walletProvider.request({
         method: "wallet_switchEthereumChain",
         params: [{ chainId: AUTONITY_CHAIN_CONFIG.chainId }],
       });
@@ -417,24 +425,25 @@ export default function HomePage() {
       if (code !== 4902) {
         throw error;
       }
-      await window.ethereum.request({
+      await walletProvider.request({
         method: "wallet_addEthereumChain",
         params: [AUTONITY_CHAIN_CONFIG],
       });
-      await window.ethereum.request({
+      await walletProvider.request({
         method: "wallet_switchEthereumChain",
         params: [{ chainId: AUTONITY_CHAIN_CONFIG.chainId }],
       });
     }
-  }, []);
+  }, [getInjectedProvider]);
 
   const getSigner = useCallback(async () => {
-    if (!window.ethereum) {
-      throw new Error("MetaMask not found.");
+    const walletProvider = getInjectedProvider();
+    if (!walletProvider) {
+      throw new Error("EVM wallet provider not found.");
     }
-    const browserProvider = new BrowserProvider(window.ethereum);
+    const browserProvider = new BrowserProvider(walletProvider);
     return browserProvider.getSigner();
-  }, []);
+  }, [getInjectedProvider]);
 
   const parseApiErrorMessage = useCallback(async (res: Response, fallback: string) => {
     try {
@@ -1269,17 +1278,27 @@ export default function HomePage() {
     setWalletMenuOpen(false);
   }, []);
 
+  const getInjectedProvider = useCallback(() => {
+    const provider = window.ethereum;
+    if (!provider) return null as InjectedEthereumProvider | null;
+    if (Array.isArray(provider.providers) && provider.providers.length > 0) {
+      const metaMaskProvider = provider.providers.find((entry) => entry.isMetaMask);
+      return metaMaskProvider || provider.providers[0];
+    }
+    return provider;
+  }, []);
+
   const connectWallet = useCallback(async () => {
-    if (!window.ethereum) {
-      setStatusLine("MetaMask not found. Install extension and retry.");
+    const provider = getInjectedProvider();
+    if (!provider) {
+      setStatusLine("No injected EVM wallet found. Install a wallet extension.");
       setWalletHydrated(true);
       return;
     }
 
     try {
       window.localStorage.removeItem(MANUAL_DISCONNECT_KEY);
-      await ensureAutonityChain();
-      const accounts = (await window.ethereum.request({
+      const accounts = (await provider.request({
         method: "eth_requestAccounts",
       })) as string[];
 
@@ -1290,7 +1309,8 @@ export default function HomePage() {
 
       const nextAccount = getAddress(accounts[0]);
       await ensureApiSession(nextAccount, true);
-      const chainHex = (await window.ethereum.request({ method: "eth_chainId" })) as string;
+      await ensureAutonityChain(provider);
+      const chainHex = (await provider.request({ method: "eth_chainId" })) as string;
       setAccount(nextAccount);
       setChainId(parseInt(chainHex, 16));
       setLastTxHash("");
@@ -1305,7 +1325,7 @@ export default function HomePage() {
       setStatusLine(parseError(error));
       setWalletHydrated(true);
     }
-  }, [ensureApiSession, ensureAutonityChain, refreshData]);
+  }, [ensureAutonityChain, ensureApiSession, getInjectedProvider, refreshData]);
 
   const runTx = useCallback(
     async (
@@ -1662,9 +1682,11 @@ export default function HomePage() {
     let cancelled = false;
 
     const hydrateWalletSession = async () => {
+      setHasInjectedWallet(Boolean(getInjectedProvider()));
       if (!window.ethereum) {
         if (!cancelled) {
-          setStatusLine("MetaMask not found. Install extension and retry.");
+          setHasInjectedWallet(false);
+          setStatusLine("No injected EVM wallet found. Install a wallet extension.");
           setWalletHydrated(true);
         }
         return;
@@ -1725,6 +1747,10 @@ export default function HomePage() {
       cancelled = true;
     };
   }, [ensureApiSession, refreshData]);
+
+  useEffect(() => {
+    setHasInjectedWallet(Boolean(getInjectedProvider()));
+  }, [getInjectedProvider]);
 
   useEffect(() => {
     if (!account || !selectedDelegator) return;
@@ -1984,15 +2010,49 @@ export default function HomePage() {
             <div className={styles.connectMeta}>
               <span className={styles.connectNetworkPill}>Autonity Mainnet</span>
             </div>
-            <button
-              className={`${styles.primaryBtn} ${styles.connectCta}`}
-              onClick={connectWallet}
-              disabled={!walletHydrated}
-            >
-              <span className={styles.connectCtaTitle}>
-                {walletHydrated ? "Connect Wallet" : "Checking session..."}
-              </span>
-            </button>
+            {!hasInjectedWallet ? (
+              <div className={styles.connectHelp}>
+                <p className={styles.connectHelpText}>
+                  No EVM wallet detected in this browser. Install one to continue:
+                </p>
+                <div className={styles.connectLinks}>
+                  <a
+                    href="https://metamask.io/download/"
+                    className={styles.connectLink}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    MetaMask
+                  </a>
+                  <a
+                    href="https://www.coinbase.com/wallet/downloads"
+                    className={styles.connectLink}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Coinbase Wallet
+                  </a>
+                  <a
+                    href="https://rabby.io/download"
+                    className={styles.connectLink}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Rabby
+                  </a>
+                </div>
+              </div>
+            ) : (
+              <button
+                className={`${styles.primaryBtn} ${styles.connectCta}`}
+                onClick={connectWallet}
+                disabled={!walletHydrated}
+              >
+                <span className={styles.connectCtaTitle}>
+                  {walletHydrated ? "Connect Wallet" : "Checking session..."}
+                </span>
+              </button>
+            )}
           </section>
         </section>
       </main>
