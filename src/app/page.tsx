@@ -38,6 +38,7 @@ type EvmProvider = {
   providers?: EvmProvider[];
   connect?: () => Promise<void>;
   enable?: () => Promise<string[]>;
+  accounts?: string[];
   disconnect?: () => Promise<void> | void;
 };
 
@@ -140,6 +141,33 @@ function parseError(error: unknown) {
     .replace(/^Error: /, "")
     .trim();
 }
+
+const AUTONITY_CHAIN_NAME = AUTONITY_CHAIN_CONFIG.chainName || "Autonity";
+
+const chainSwitchErrorMessage = (error: unknown) => {
+  const code = (error as { code?: number })?.code;
+  const message = (error as { message?: string })?.message || "";
+  if (code === 4902) {
+    return `Could not add ${AUTONITY_CHAIN_NAME} to your wallet. Please add chain ID ${AUT_CHAIN_ID} manually.`;
+  }
+  if (code === 4001) {
+    return `Chain switch cancelled. Please approve switching to ${AUTONITY_CHAIN_NAME}.`;
+  }
+  if (code === 4900) {
+    return "Wallet is disconnected from a network. Reconnect and retry.";
+  }
+  if (code === 4100) {
+    return "Wallet not authorized. Reconnect and approve network/signature requests.";
+  }
+  if (code === 4200) {
+    return "Wallet does not support this network method. Add Autonity Mainnet manually.";
+  }
+  const normalized = message.trim();
+  if (normalized) {
+    return `Chain switch failed. ${normalized}`;
+  }
+  return `Please switch your wallet to ${AUTONITY_CHAIN_NAME}.`;
+};
 
 function formatCommissionRate(rate: bigint) {
   const percent = Number(rate) / 100;
@@ -462,35 +490,83 @@ export default function HomePage() {
     return walletConnectProvider;
   }, []);
 
+  const getWalletAccounts = useCallback(async (provider: EvmProvider) => {
+    const normalize = (value: unknown): string | null => {
+      if (typeof value !== "string") return null;
+      try {
+        return getAddress(value);
+      } catch {
+        return null;
+      }
+    };
+
+    try {
+      const requested = await provider.request({ method: "eth_requestAccounts" });
+      const requestedAccounts = Array.isArray(requested) ? requested : [];
+      const normalized = requestedAccounts.map(normalize).filter((item): item is string => Boolean(item));
+      if (normalized.length > 0) return normalized;
+    } catch {
+      // some providers (notably WalletConnect) can fail this method until connected;
+      // fallback to eth_accounts and provider cache.
+    }
+
+    try {
+      const accountsResult = await provider.request({ method: "eth_accounts" });
+      const accounts = Array.isArray(accountsResult) ? accountsResult : [];
+      const normalized = accounts.map(normalize).filter((item): item is string => Boolean(item));
+      if (normalized.length > 0) return normalized;
+    } catch {
+      // fallback handled below
+    }
+
+    const providerAccounts = (provider as { accounts?: unknown }).accounts;
+    const cached: unknown[] = Array.isArray(providerAccounts) ? (providerAccounts as unknown[]) : [];
+    const normalizedCached = cached.map(normalize).filter((item): item is string => Boolean(item));
+    return normalizedCached;
+  }, []);
+
   const ensureAutonityChain = useCallback(async (provider?: EvmProvider) => {
     const walletProvider = provider || getActiveWalletProvider();
     if (!walletProvider) {
       throw new Error("EVM wallet provider not found.");
     }
-
     try {
+      const activeChain = (await walletProvider.request({ method: "eth_chainId" })) as string;
+      if (
+        typeof activeChain === "string" &&
+        activeChain.toLowerCase() === AUTONITY_CHAIN_CONFIG.chainId.toLowerCase()
+      ) {
+        return;
+      }
+
       await walletProvider.request({
         method: "wallet_switchEthereumChain",
         params: [{ chainId: AUTONITY_CHAIN_CONFIG.chainId }],
       });
     } catch (error) {
       const code = (error as { code?: number }).code;
-      if (code !== 4902) {
-        throw error;
+      if (code === 4902) {
+        try {
+          await walletProvider.request({
+            method: "wallet_addEthereumChain",
+            params: [AUTONITY_CHAIN_CONFIG],
+          });
+          await walletProvider.request({
+            method: "wallet_switchEthereumChain",
+            params: [{ chainId: AUTONITY_CHAIN_CONFIG.chainId }],
+          });
+          return;
+        } catch (addError) {
+          throw new Error(chainSwitchErrorMessage(addError));
+        }
       }
-      await walletProvider.request({
-        method: "wallet_addEthereumChain",
-        params: [AUTONITY_CHAIN_CONFIG],
-      });
-      await walletProvider.request({
-        method: "wallet_switchEthereumChain",
-        params: [{ chainId: AUTONITY_CHAIN_CONFIG.chainId }],
-      });
+
+      throw new Error(chainSwitchErrorMessage(error));
     }
   }, [getActiveWalletProvider]);
 
-  const getSigner = useCallback(async () => {
-    const walletProvider = getActiveWalletProvider();
+  const getSigner = useCallback(async (walletProviderOverride?: EvmProvider) => {
+    const walletProvider = walletProviderOverride || getActiveWalletProvider();
     if (!walletProvider) {
       throw new Error("EVM wallet provider not found.");
     }
@@ -510,7 +586,7 @@ export default function HomePage() {
   }, []);
 
   const ensureApiSession = useCallback(
-    async (address: string, interactive: boolean) => {
+    async (address: string, interactive: boolean, providerOverride?: EvmProvider) => {
       const normalized = address.toLowerCase();
       const params = new URLSearchParams({ address });
       try {
@@ -551,7 +627,7 @@ export default function HomePage() {
         throw new Error("Session challenge payload is empty.");
       }
 
-      const signer = await getSigner();
+      const signer = await getSigner(providerOverride);
       const signature = await signer.signMessage(message);
 
       const verifyRes = await fetch("/api/auth/verify", {
@@ -1342,13 +1418,9 @@ export default function HomePage() {
       setWalletHydrated(true);
       return;
     }
-    setActiveWalletProvider(provider);
-
     try {
       window.localStorage.removeItem(MANUAL_DISCONNECT_KEY);
-      const accounts = (await provider.request({
-        method: "eth_requestAccounts",
-      })) as string[];
+      const accounts = await getWalletAccounts(provider);
 
       if (!Array.isArray(accounts) || accounts.length === 0) {
         setStatusLine("No wallet account found.");
@@ -1356,9 +1428,15 @@ export default function HomePage() {
       }
 
       const nextAccount = getAddress(accounts[0]);
-      await ensureApiSession(nextAccount, true);
+      const sessionReady = await ensureApiSession(nextAccount, true, provider);
+      if (!sessionReady) {
+        setStatusLine("Wallet session setup failed.");
+        return;
+      }
+
       await ensureAutonityChain(provider);
       const chainHex = (await provider.request({ method: "eth_chainId" })) as string;
+      setActiveWalletProvider(provider);
       setAccount(nextAccount);
       setChainId(parseInt(chainHex, 16));
       setLastTxHash("");
@@ -1377,6 +1455,7 @@ export default function HomePage() {
   }, [
     ensureAutonityChain,
     ensureApiSession,
+    getWalletAccounts,
     getInjectedProvider,
     createWalletConnectProvider,
     refreshData,
@@ -1745,7 +1824,7 @@ export default function HomePage() {
           setHasInjectedWallet(false);
           setStatusLine(
             HAS_WALLETCONNECT
-              ? "No wallet extension detected. Use WalletConnect below."
+              ? "Connect your wallet to continue."
               : "No injected EVM wallet found. Install a wallet extension."
           );
           setActiveWalletProvider(null);
@@ -2085,38 +2164,7 @@ export default function HomePage() {
             </div>
             {!hasInjectedWallet ? (
               <div className={styles.connectHelp}>
-                <p className={styles.connectHelpText}>
-                  {HAS_WALLETCONNECT
-                    ? "No wallet extension detected. You can connect with WalletConnect:"
-                    : "No EVM wallet detected in this browser. Install one to continue:"}
-                </p>
-                <div className={styles.connectLinks}>
-                  <a
-                    href="https://metamask.io/download/"
-                    className={styles.connectLink}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    MetaMask
-                  </a>
-                  <a
-                    href="https://www.coinbase.com/wallet/downloads"
-                    className={styles.connectLink}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    Coinbase Wallet
-                  </a>
-                  <a
-                    href="https://rabby.io/download"
-                    className={styles.connectLink}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    Rabby
-                  </a>
-                </div>
-                {HAS_WALLETCONNECT && (
+                {HAS_WALLETCONNECT ? (
                   <button
                     type="button"
                     className={`${styles.primaryBtn} ${styles.connectCta}`}
@@ -2127,6 +2175,38 @@ export default function HomePage() {
                       {walletHydrated ? "Connect Wallet" : "Checking session..."}
                     </span>
                   </button>
+                ) : (
+                  <>
+                    <p className={styles.connectHelpText}>
+                      No EVM wallet detected in this browser. Install one to continue:
+                    </p>
+                    <div className={styles.connectLinks}>
+                      <a
+                        href="https://metamask.io/download/"
+                        className={styles.connectLink}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        MetaMask
+                      </a>
+                      <a
+                        href="https://www.coinbase.com/wallet/downloads"
+                        className={styles.connectLink}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        Coinbase Wallet
+                      </a>
+                      <a
+                        href="https://rabby.io/download"
+                        className={styles.connectLink}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        Rabby
+                      </a>
+                    </div>
+                  </>
                 )}
               </div>
             ) : (
