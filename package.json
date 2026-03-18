@@ -10,6 +10,7 @@
     "cache:validators": "node scripts/cache-validator-registry.mjs"
   },
   "dependencies": {
+    "@walletconnect/ethereum-provider": "^2.23.8",
     "ethers": "^6.16.0",
     "next": "16.1.6",
     "react": "19.2.3",

@@ -28,19 +28,22 @@ import {
 } from "@/lib/autonity";
 import Image from "next/image";
 
-type InjectedEthereumProvider = {
+type EvmProvider = {
   request: (args: { method: string; params?: unknown[] | object }) => Promise<unknown>;
   on?: (event: string, listener: (...args: unknown[]) => void) => void;
   removeListener?: (event: string, listener: (...args: unknown[]) => void) => void;
   isMetaMask?: boolean;
   isCoinbaseWallet?: boolean;
   isBraveWallet?: boolean;
-  providers?: InjectedEthereumProvider[];
+  providers?: EvmProvider[];
+  connect?: () => Promise<void>;
+  enable?: () => Promise<string[]>;
+  disconnect?: () => Promise<void> | void;
 };
 
 declare global {
   interface Window {
-    ethereum?: InjectedEthereumProvider;
+    ethereum?: EvmProvider;
   }
 }
 
@@ -92,6 +95,8 @@ const VAULT_VESTING_STATE_TOPIC =
 const VAULT_FUNDS_RELEASED_TOPIC =
   "0xeed10c470424824e4a4309075162f10b9989088b23fbed2349698cedd44493fb";
 const MANUAL_DISCONNECT_KEY = "autodesk:manual_disconnect";
+const WALLETCONNECT_PROJECT_ID = process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID || "";
+const HAS_WALLETCONNECT = WALLETCONNECT_PROJECT_ID.length > 0;
 
 type ActionPanel = "stake" | "unstake" | "claim";
 type PositionInlineAction = { type: "stake" | "unstake"; validator: string };
@@ -231,6 +236,7 @@ export default function HomePage() {
   const [claimValidator, setClaimValidator] = useState("");
   const [walletHydrated, setWalletHydrated] = useState(false);
   const [hasInjectedWallet, setHasInjectedWallet] = useState(false);
+  const [activeWalletProvider, setActiveWalletProvider] = useState<EvmProvider | null>(null);
 
   const [statusLine, setStatusLine] = useState("Connect your wallet to start.");
   const [actionLine, setActionLine] = useState("");
@@ -411,7 +417,7 @@ export default function HomePage() {
 
   const getInjectedProvider = useCallback(() => {
     const provider = window.ethereum;
-    if (!provider) return null as InjectedEthereumProvider | null;
+    if (!provider) return null as EvmProvider | null;
     if (Array.isArray(provider.providers) && provider.providers.length > 0) {
       const metaMaskProvider = provider.providers.find((entry) => entry.isMetaMask);
       return metaMaskProvider || provider.providers[0];
@@ -419,8 +425,45 @@ export default function HomePage() {
     return provider;
   }, []);
 
-  const ensureAutonityChain = useCallback(async (provider?: InjectedEthereumProvider) => {
-    const walletProvider = provider || getInjectedProvider();
+  const getActiveWalletProvider = useCallback(() => {
+    return activeWalletProvider || getInjectedProvider();
+  }, [activeWalletProvider, getInjectedProvider]);
+
+  const createWalletConnectProvider = useCallback(async () => {
+    if (!HAS_WALLETCONNECT) {
+      throw new Error("WalletConnect is not configured. Set NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID.");
+    }
+
+    const module = await import("@walletconnect/ethereum-provider");
+    const EthereumProvider = module.EthereumProvider as unknown as {
+      init: (options: unknown) => Promise<EvmProvider>;
+    };
+
+    const walletConnectProvider = (await EthereumProvider.init({
+      projectId: WALLETCONNECT_PROJECT_ID,
+      chains: [AUT_CHAIN_ID],
+      showQrModal: true,
+      rpcMap: {
+        [AUT_CHAIN_ID]: AUT_RPC_URL,
+      },
+      metadata: {
+        name: "Autonity Staking Terminal",
+        description: "Stake and manage AUTONITY liquid staking",
+        url: typeof window !== "undefined" ? window.location.origin : "https://autonity-staking.uniqnodes.com",
+        icons: ["https://walletconnect.com/walletconnect-logo.png"],
+      },
+    })) as EvmProvider;
+
+    if (typeof walletConnectProvider.connect === "function") {
+      await walletConnectProvider.connect();
+    } else if (typeof walletConnectProvider.enable === "function") {
+      await walletConnectProvider.enable();
+    }
+    return walletConnectProvider;
+  }, []);
+
+  const ensureAutonityChain = useCallback(async (provider?: EvmProvider) => {
+    const walletProvider = provider || getActiveWalletProvider();
     if (!walletProvider) {
       throw new Error("EVM wallet provider not found.");
     }
@@ -444,16 +487,16 @@ export default function HomePage() {
         params: [{ chainId: AUTONITY_CHAIN_CONFIG.chainId }],
       });
     }
-  }, [getInjectedProvider]);
+  }, [getActiveWalletProvider]);
 
   const getSigner = useCallback(async () => {
-    const walletProvider = getInjectedProvider();
+    const walletProvider = getActiveWalletProvider();
     if (!walletProvider) {
       throw new Error("EVM wallet provider not found.");
     }
     const browserProvider = new BrowserProvider(walletProvider);
     return browserProvider.getSigner();
-  }, [getInjectedProvider]);
+  }, [getActiveWalletProvider]);
 
   const parseApiErrorMessage = useCallback(async (res: Response, fallback: string) => {
     try {
@@ -1289,12 +1332,17 @@ export default function HomePage() {
   }, []);
 
   const connectWallet = useCallback(async () => {
-    const provider = getInjectedProvider();
+    const provider = getInjectedProvider() || (HAS_WALLETCONNECT ? await createWalletConnectProvider() : null);
     if (!provider) {
-      setStatusLine("No injected EVM wallet found. Install a wallet extension.");
+      setStatusLine(
+        HAS_WALLETCONNECT
+          ? "No wallet found to connect. WalletConnect is not configured in this deployment."
+          : "No injected EVM wallet found. Install a wallet extension."
+      );
       setWalletHydrated(true);
       return;
     }
+    setActiveWalletProvider(provider);
 
     try {
       window.localStorage.removeItem(MANUAL_DISCONNECT_KEY);
@@ -1322,10 +1370,17 @@ export default function HomePage() {
       await refreshData(nextAccount, nextAccount);
       setWalletHydrated(true);
     } catch (error) {
+      setActiveWalletProvider(null);
       setStatusLine(parseError(error));
       setWalletHydrated(true);
     }
-  }, [ensureAutonityChain, ensureApiSession, getInjectedProvider, refreshData]);
+  }, [
+    ensureAutonityChain,
+    ensureApiSession,
+    getInjectedProvider,
+    createWalletConnectProvider,
+    refreshData,
+  ]);
 
   const runTx = useCallback(
     async (
@@ -1623,11 +1678,13 @@ export default function HomePage() {
   }, [account, readyToWithdrawNtn, runTx, selectedDelegator]);
 
   useEffect(() => {
-    if (!window.ethereum?.on) return;
+    const walletProvider = activeWalletProvider || getInjectedProvider();
+    if (!walletProvider?.on) return;
 
     const onAccountsChanged = (nextAccounts: unknown) => {
       const list = Array.isArray(nextAccounts) ? (nextAccounts as string[]) : [];
       if (list.length === 0) {
+        setActiveWalletProvider(null);
         resetAppSession("Wallet disconnected.");
         return;
       }
@@ -1669,14 +1726,14 @@ export default function HomePage() {
       }
     };
 
-    window.ethereum.on("accountsChanged", onAccountsChanged);
-    window.ethereum.on("chainChanged", onChainChanged);
+    walletProvider.on("accountsChanged", onAccountsChanged);
+    walletProvider.on("chainChanged", onChainChanged);
 
     return () => {
-      window.ethereum?.removeListener?.("accountsChanged", onAccountsChanged);
-      window.ethereum?.removeListener?.("chainChanged", onChainChanged);
+      walletProvider?.removeListener?.("accountsChanged", onAccountsChanged);
+      walletProvider?.removeListener?.("chainChanged", onChainChanged);
     };
-  }, [account, ensureApiSession, refreshData, resetAppSession, selectedDelegator]);
+  }, [activeWalletProvider, account, ensureApiSession, getInjectedProvider, refreshData, resetAppSession, selectedDelegator]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1686,7 +1743,12 @@ export default function HomePage() {
       if (!window.ethereum) {
         if (!cancelled) {
           setHasInjectedWallet(false);
-          setStatusLine("No injected EVM wallet found. Install a wallet extension.");
+          setStatusLine(
+            HAS_WALLETCONNECT
+              ? "No wallet extension detected. Use WalletConnect below."
+              : "No injected EVM wallet found. Install a wallet extension."
+          );
+          setActiveWalletProvider(null);
           setWalletHydrated(true);
         }
         return;
@@ -1721,6 +1783,7 @@ export default function HomePage() {
           setStatusLine("Connect your wallet to start.");
           return;
         }
+        setActiveWalletProvider(getInjectedProvider());
         setAccount(nextAccount);
         setLastTxHash("");
         setActionLine("");
@@ -1879,8 +1942,17 @@ export default function HomePage() {
     }
   }, []);
 
-  const disconnectWallet = useCallback(() => {
-    void fetch("/api/auth/logout", {
+  const disconnectWallet = useCallback(async () => {
+    const provider = activeWalletProvider;
+    if (provider && typeof provider.disconnect === "function") {
+      try {
+        await provider.disconnect();
+      } catch {
+        setActionLine("Wallet disconnect failed, continuing.");
+      }
+    }
+
+    await fetch("/api/auth/logout", {
       method: "POST",
       cache: "no-store",
       keepalive: true,
@@ -1893,7 +1965,8 @@ export default function HomePage() {
       }
     }
     resetAppSession("Disconnected from app.");
-  }, [account, resetAppSession]);
+    setActiveWalletProvider(null);
+  }, [account, activeWalletProvider, resetAppSession]);
 
   const fillStakeMax = () => {
     setBondAmount(formatToken(readyToStakeNtn, 18, 6));
@@ -2013,7 +2086,9 @@ export default function HomePage() {
             {!hasInjectedWallet ? (
               <div className={styles.connectHelp}>
                 <p className={styles.connectHelpText}>
-                  No EVM wallet detected in this browser. Install one to continue:
+                  {HAS_WALLETCONNECT
+                    ? "No wallet extension detected. You can connect with WalletConnect:"
+                    : "No EVM wallet detected in this browser. Install one to continue:"}
                 </p>
                 <div className={styles.connectLinks}>
                   <a
@@ -2041,6 +2116,18 @@ export default function HomePage() {
                     Rabby
                   </a>
                 </div>
+                {HAS_WALLETCONNECT && (
+                  <button
+                    type="button"
+                    className={`${styles.primaryBtn} ${styles.connectCta}`}
+                    onClick={connectWallet}
+                    disabled={!walletHydrated}
+                  >
+                    <span className={styles.connectCtaTitle}>
+                      {walletHydrated ? "Connect Wallet" : "Checking session..."}
+                    </span>
+                  </button>
+                )}
               </div>
             ) : (
               <button
