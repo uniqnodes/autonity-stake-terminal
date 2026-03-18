@@ -41,6 +41,13 @@ type EvmProvider = {
   connect?: () => Promise<void>;
   enable?: () => Promise<string[]>;
   accounts?: string[];
+  session?: {
+    namespaces?: {
+      [namespace: string]: {
+        accounts?: string[];
+      };
+    };
+  };
   disconnect?: () => Promise<void> | void;
 };
 
@@ -459,6 +466,28 @@ export default function HomePage() {
     return activeWalletProvider || getInjectedProvider();
   }, [activeWalletProvider, getInjectedProvider]);
 
+  const requestWithTimeout = useCallback(async <T,>(
+    provider: EvmProvider,
+    args: { method: string; params?: unknown[] | object },
+    timeoutMs = 25000
+  ): Promise<T> => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    try {
+      const requestPromise = provider.request(args) as Promise<T>;
+      const timeoutPromise = new Promise<T>((_, reject) => {
+        timer = setTimeout(() => {
+          reject(new Error(`Wallet request timed out (${timeoutMs}ms): ${args.method}`));
+        }, timeoutMs);
+      });
+      const result = await Promise.race([requestPromise, timeoutPromise]);
+      return result;
+    } finally {
+      if (timer) {
+        clearTimeout(timer);
+      }
+    }
+  }, []);
+
   const createWalletConnectProvider = useCallback(async () => {
     if (!HAS_WALLETCONNECT) {
       throw new Error("WalletConnect is not configured. Set NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID.");
@@ -524,6 +553,22 @@ export default function HomePage() {
     const providerAccounts = (provider as { accounts?: unknown }).accounts;
     const cached: unknown[] = Array.isArray(providerAccounts) ? (providerAccounts as unknown[]) : [];
     const normalizedCached = cached.map(normalize).filter((item): item is string => Boolean(item));
+    if (normalizedCached.length > 0) return normalizedCached;
+
+    const sessionNamespaces = provider.session?.namespaces || {};
+    const namespaceAccounts = Object.values(sessionNamespaces)
+      .map((entry) => (Array.isArray(entry.accounts) ? entry.accounts : []))
+      .flat();
+    const normalizedSession = namespaceAccounts
+      .map((entry) => {
+        if (typeof entry !== "string") return null;
+        const parts = entry.split(":");
+        const address = parts[parts.length - 1];
+        return normalize(address);
+      })
+      .filter((item): item is string => Boolean(item));
+    if (normalizedSession.length > 0) return normalizedSession;
+
     return normalizedCached;
   }, []);
 
@@ -533,7 +578,9 @@ export default function HomePage() {
       throw new Error("EVM wallet provider not found.");
     }
     try {
-      const activeChain = (await walletProvider.request({ method: "eth_chainId" })) as string;
+      const activeChain = (await requestWithTimeout<string>(walletProvider, {
+        method: "eth_chainId",
+      })) as string;
       if (
         typeof activeChain === "string" &&
         activeChain.toLowerCase() === AUTONITY_CHAIN_CONFIG.chainId.toLowerCase()
@@ -541,7 +588,7 @@ export default function HomePage() {
         return;
       }
 
-      await walletProvider.request({
+      await requestWithTimeout(walletProvider, {
         method: "wallet_switchEthereumChain",
         params: [{ chainId: AUTONITY_CHAIN_CONFIG.chainId }],
       });
@@ -549,11 +596,11 @@ export default function HomePage() {
       const code = (error as { code?: number }).code;
       if (code === 4902) {
         try {
-          await walletProvider.request({
+          await requestWithTimeout(walletProvider, {
             method: "wallet_addEthereumChain",
             params: [AUTONITY_CHAIN_CONFIG],
           });
-          await walletProvider.request({
+          await requestWithTimeout(walletProvider, {
             method: "wallet_switchEthereumChain",
             params: [{ chainId: AUTONITY_CHAIN_CONFIG.chainId }],
           });
@@ -565,7 +612,7 @@ export default function HomePage() {
 
       throw new Error(chainSwitchErrorMessage(error));
     }
-  }, [getActiveWalletProvider]);
+  }, [getActiveWalletProvider, requestWithTimeout]);
 
   const getSigner = useCallback(async (walletProviderOverride?: EvmProvider) => {
     const walletProvider = walletProviderOverride || getActiveWalletProvider();
@@ -630,21 +677,16 @@ export default function HomePage() {
       }
 
       let signature: string;
+      const signParams = [hexlify(toUtf8Bytes(message)), address];
       if (providerOverride) {
         try {
+          signature = await requestWithTimeout<string>(providerOverride, {
+            method: "personal_sign",
+            params: signParams,
+          });
+        } catch {
           const signer = await getSigner(providerOverride);
           signature = await signer.signMessage(message);
-        } catch (signError) {
-          const walletProvider = providerOverride;
-          const walletAddress = address;
-          try {
-            signature = (await walletProvider.request({
-              method: "personal_sign",
-              params: [hexlify(toUtf8Bytes(message)), walletAddress],
-            })) as string;
-          } catch {
-            throw signError;
-          }
         }
       } else {
         const signer = await getSigner();
@@ -666,7 +708,7 @@ export default function HomePage() {
       apiSessionAddressRef.current = normalized;
       return true;
     },
-    [getSigner, parseApiErrorMessage]
+    [getSigner, parseApiErrorMessage, requestWithTimeout]
   );
 
   const discoverVaults = useCallback(
