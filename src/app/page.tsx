@@ -48,6 +48,8 @@ type EvmProvider = {
       };
     };
   };
+  chainId?: number;
+  setChainIds?: (chains: string[]) => void;
   disconnect?: () => Promise<void> | void;
 };
 
@@ -188,6 +190,9 @@ const chainSwitchErrorMessage = (error: unknown) => {
     return "Wallet does not support this network method. Add Autonity Mainnet manually.";
   }
   const normalized = message.trim();
+  if (normalized.includes("missing or invalid. request() chainId")) {
+    return "WalletConnect session chain context is stale. Re-open MetaMask approval and return to continue.";
+  }
   if (normalized) {
     return `Chain switch failed. ${normalized}`;
   }
@@ -517,7 +522,8 @@ export default function HomePage() {
 
     const walletConnectProvider = (await EthereumProvider.init({
       projectId: WALLETCONNECT_PROJECT_ID,
-      chains: [AUT_CHAIN_ID],
+      chains: [],
+      optionalChains: [AUT_CHAIN_ID],
       showQrModal: true,
       rpcMap: {
         [AUT_CHAIN_ID]: AUT_RPC_URL,
@@ -579,6 +585,38 @@ export default function HomePage() {
     if (normalizedSession.length > 0) return normalizedSession;
 
     return normalizedCached;
+  }, []);
+
+  const primeWalletConnectChainContext = useCallback((provider: EvmProvider) => {
+    const namespaces = provider.session?.namespaces || {};
+    const namespaceAccounts = Object.values(namespaces)
+      .map((entry) => (Array.isArray(entry.accounts) ? entry.accounts : []))
+      .flat();
+
+    let chainIdFromSession: number | null = null;
+    for (const account of namespaceAccounts) {
+      if (typeof account !== "string") continue;
+      const parts = account.split(":");
+      if (parts.length < 2) continue;
+      const chainPart = Number(parts[1]);
+      if (!Number.isFinite(chainPart) || chainPart <= 0) continue;
+      chainIdFromSession = chainPart;
+      break;
+    }
+
+    if (!chainIdFromSession) return;
+    const caipChain = `eip155:${chainIdFromSession}`;
+
+    try {
+      if (typeof provider.setChainIds === "function") {
+        provider.setChainIds([caipChain]);
+        return;
+      }
+    } catch {
+      // fallback to direct assignment below
+    }
+
+    provider.chainId = chainIdFromSession;
   }, []);
 
   const ensureAutonityChain = useCallback(async (provider?: EvmProvider) => {
@@ -1486,6 +1524,7 @@ export default function HomePage() {
       }
       walletConnectFlowRef.current = true;
       try {
+        primeWalletConnectChainContext(provider);
         setStatusLine("Reading wallet account...");
         const accounts = await getWalletAccounts(provider);
         if (!Array.isArray(accounts) || accounts.length === 0) {
@@ -1534,7 +1573,14 @@ export default function HomePage() {
         walletConnectFlowRef.current = false;
       }
     },
-    [ensureApiSession, ensureAutonityChain, getWalletAccounts, refreshData, requestWithTimeout]
+    [
+      ensureApiSession,
+      ensureAutonityChain,
+      getWalletAccounts,
+      primeWalletConnectChainContext,
+      refreshData,
+      requestWithTimeout,
+    ]
   );
 
   const connectWallet = useCallback(async () => {
