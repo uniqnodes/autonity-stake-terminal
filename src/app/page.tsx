@@ -409,6 +409,16 @@ export default function HomePage() {
           : ZERO
       : ZERO;
 
+  const getInjectedProvider = useCallback(() => {
+    const provider = window.ethereum;
+    if (!provider) return null as InjectedEthereumProvider | null;
+    if (Array.isArray(provider.providers) && provider.providers.length > 0) {
+      const metaMaskProvider = provider.providers.find((entry) => entry.isMetaMask);
+      return metaMaskProvider || provider.providers[0];
+    }
+    return provider;
+  }, []);
+
   const ensureAutonityChain = useCallback(async (provider?: InjectedEthereumProvider) => {
     const walletProvider = provider || getInjectedProvider();
     if (!walletProvider) {
@@ -1276,16 +1286,6 @@ export default function HomePage() {
     setClaimDropdownOpen(false);
     setCopiedAddressType(null);
     setWalletMenuOpen(false);
-  }, []);
-
-  const getInjectedProvider = useCallback(() => {
-    const provider = window.ethereum;
-    if (!provider) return null as InjectedEthereumProvider | null;
-    if (Array.isArray(provider.providers) && provider.providers.length > 0) {
-      const metaMaskProvider = provider.providers.find((entry) => entry.isMetaMask);
-      return metaMaskProvider || provider.providers[0];
-    }
-    return provider;
   }, []);
 
   const connectWallet = useCallback(async () => {
