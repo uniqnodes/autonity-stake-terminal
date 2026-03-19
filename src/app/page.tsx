@@ -587,6 +587,23 @@ export default function HomePage() {
     return normalizedCached;
   }, []);
 
+  const waitForWalletAccounts = useCallback(
+    async (provider: EvmProvider, timeoutMs = 45000, intervalMs = 1200) => {
+      const startedAt = Date.now();
+      while (Date.now() - startedAt < timeoutMs) {
+        const accounts = await getWalletAccounts(provider);
+        if (accounts.length > 0) {
+          return accounts;
+        }
+        await new Promise<void>((resolve) => {
+          setTimeout(resolve, intervalMs);
+        });
+      }
+      return [] as string[];
+    },
+    [getWalletAccounts]
+  );
+
   const primeWalletConnectChainContext = useCallback((provider: EvmProvider) => {
     const namespaces = provider.session?.namespaces || {};
     const namespaceAccounts = Object.values(namespaces)
@@ -1526,9 +1543,15 @@ export default function HomePage() {
       try {
         primeWalletConnectChainContext(provider);
         setStatusLine("Reading wallet account...");
-        const accounts = await getWalletAccounts(provider);
+        let accounts = await getWalletAccounts(provider);
         if (!Array.isArray(accounts) || accounts.length === 0) {
-          throw new Error("Wallet account not available yet. Approve in wallet and return.");
+          setStatusLine("Waiting for wallet account approval...");
+          accounts = await waitForWalletAccounts(provider);
+        }
+        if (!Array.isArray(accounts) || accounts.length === 0) {
+          throw new Error(
+            "Wallet account not available yet. Approve in wallet and return, then wait a few seconds."
+          );
         }
 
         const nextAccount = getAddress(accounts[0]);
@@ -1580,6 +1603,7 @@ export default function HomePage() {
       primeWalletConnectChainContext,
       refreshData,
       requestWithTimeout,
+      waitForWalletAccounts,
     ]
   );
 
