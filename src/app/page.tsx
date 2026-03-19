@@ -488,28 +488,6 @@ export default function HomePage() {
     return activeWalletProvider || getInjectedProvider();
   }, [activeWalletProvider, getInjectedProvider]);
 
-  const requestWithTimeout = useCallback(async <T,>(
-    provider: EvmProvider,
-    args: { method: string; params?: unknown[] | object },
-    timeoutMs = 12000
-  ): Promise<T> => {
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    try {
-      const requestPromise = provider.request(args) as Promise<T>;
-      const timeoutPromise = new Promise<T>((_, reject) => {
-        timer = setTimeout(() => {
-          reject(new Error(`Wallet request timed out (${timeoutMs}ms): ${args.method}`));
-        }, timeoutMs);
-      });
-      const result = await Promise.race([requestPromise, timeoutPromise]);
-      return result;
-    } finally {
-      if (timer) {
-        clearTimeout(timer);
-      }
-    }
-  }, []);
-
   const createWalletConnectProvider = useCallback(async () => {
     if (!HAS_WALLETCONNECT) {
       throw new Error("WalletConnect is not configured. Set NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID.");
@@ -642,7 +620,7 @@ export default function HomePage() {
       throw new Error("EVM wallet provider not found.");
     }
     try {
-      const activeChain = (await requestWithTimeout<string>(walletProvider, {
+      const activeChain = (await walletProvider.request({
         method: "eth_chainId",
       })) as string;
       if (
@@ -676,7 +654,7 @@ export default function HomePage() {
 
       throw new Error(chainSwitchErrorMessage(error));
     }
-  }, [getActiveWalletProvider, requestWithTimeout]);
+  }, [getActiveWalletProvider]);
 
   const getSigner = useCallback(async (walletProviderOverride?: EvmProvider) => {
     const walletProvider = walletProviderOverride || getActiveWalletProvider();
@@ -1548,9 +1526,32 @@ export default function HomePage() {
           setStatusLine("Waiting for wallet account approval...");
           accounts = await waitForWalletAccounts(provider);
         }
+
+        if (
+          (!Array.isArray(accounts) || accounts.length === 0) &&
+          typeof provider.disconnect === "function" &&
+          typeof provider.connect === "function"
+        ) {
+          setStatusLine("Re-establishing WalletConnect session...");
+          try {
+            await provider.disconnect();
+          } catch {}
+          try {
+            await Promise.race([
+              provider.connect(),
+              new Promise<never>((_, reject) =>
+                setTimeout(() => reject(new Error("WalletConnect reconnect timed out.")), 30000)
+              ),
+            ]);
+          } catch {}
+          primeWalletConnectChainContext(provider);
+          setStatusLine("WalletConnect session reopened. Waiting for account approval...");
+          accounts = await waitForWalletAccounts(provider);
+        }
+
         if (!Array.isArray(accounts) || accounts.length === 0) {
           throw new Error(
-            "Wallet account not available yet. Approve in wallet and return, then wait a few seconds."
+            "Wallet account not available yet. Open MetaMask, confirm connection, then return."
           );
         }
 
@@ -1566,7 +1567,7 @@ export default function HomePage() {
           throw new Error("Session signature required.");
         }
 
-        const chainHex = (await requestWithTimeout<string>(provider, {
+        const chainHex = (await provider.request({
           method: "eth_chainId",
         })) as string;
         const parsedChainId =
@@ -1602,7 +1603,6 @@ export default function HomePage() {
       getWalletAccounts,
       primeWalletConnectChainContext,
       refreshData,
-      requestWithTimeout,
       waitForWalletAccounts,
     ]
   );
